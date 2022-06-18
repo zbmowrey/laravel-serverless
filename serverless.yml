@@ -1,0 +1,83 @@
+service: laravel-serverless-test
+
+custom:
+  APP_NAME: laravel-serverless-test
+
+provider:
+  name: aws
+  # The AWS region in which to deploy (us-east-1 is the default)
+  region: us-east-2
+  # The stage of the application, e.g. dev, production, staging… ('dev' is the default)
+  stage: dev
+  runtime: provided.al2
+  lambdaHashingVersion: 20201221
+  environment:
+    DYNAMODB_CACHE_TABLE: !Ref CacheTable
+    AWS_BUCKET: ${construct:serverless-laravel.bucketName}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Resource: !GetAtt CacheTable.Arn
+          Action:
+            - dynamodb:DescribeTable
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+package:
+  # Directories to exclude from deployment
+  patterns:
+    - '!node_modules/**'
+    - '!public/storage'
+    - '!resources/assets/**'
+    - '!storage/**'
+    - '!tests/**'
+
+constructs:
+  serverless-laravel:
+    type: storage
+
+functions:
+  # This function runs the Laravel website/API
+  web:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-81-fpm}
+    events:
+      - httpApi: '*'
+    environment:
+      BREF_PING_DISABLE: 1
+  # This function lets us run artisan commands in Lambda
+  artisan:
+    handler: artisan
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-81} # PHP
+      - ${bref:layer.console} # The "console" layer
+    environment:
+      BREF_PING_DISABLE: 1
+
+plugins:
+  - ./vendor/bref/bref
+  - serverless-lift
+
+resources:
+  Resources:
+    CacheTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: "laravel-lambda-cache-${self:provider.stage}"
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        BillingMode: PAY_PER_REQUEST
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
